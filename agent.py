@@ -11,32 +11,28 @@ from langchain_community.tools import TavilySearchResults
 
 load_dotenv()
 
-# Initialize ChatGroq LLM with increased creativity
 llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.7)
 
-# Initialize search tool
 search_tool = TavilySearchResults()
 
 
 class Section(BaseModel):
     name: str
     description: str
-    search_query: Optional[str] = None  # Optional search query for the section
+    search_query: Optional[List[str]] = None  
 
 
 class Sections(BaseModel):
     sections: List[Section]
 
 
-# Augment LLM with structured output for planning
 planner = llm.with_structured_output(Sections)
 
 
-# Graph state definition including the new language_tone field
 class State(TypedDict):
     topic: str
     sections: List[Section]
-    language_tone: str  # e.g., "formal", "simple", "professional"
+    language_tone: str            # e.g., "formal", "simple", "professional"
     completed_sections: Annotated[List[str], operator.add]
     final_report: str
 
@@ -56,9 +52,8 @@ def orchestrator(state: State):
                     "Generate a report plan with fewer than 3 sections. Each section must include:\n"
                     "1. A clear and concise name (required).\n"
                     "2. A detailed description outlining what the section should cover (required).\n"
-                    "3. An optional search query if additional research is necessary.\n\n"
-                    "Ensure that your plan encourages the use of external search results wherever possible "
-                    "to verify and update the information."
+                    "3. An optional list of search queries if additional research is necessary (the search queries must include any URLs provided in the topic).\n\n"
+                    "Ensure that your plan encourages the use of external search results wherever possible to verify and update the information."
                 )
             ),
             HumanMessage(content=f"Topic: {state['topic']}"),
@@ -84,35 +79,30 @@ def llm_writer(state: WorkerState):
     ]
 
     if section.search_query:
-        search_results = search_tool.run(section.search_query)
-        if search_results:
-            messages.append(
-                HumanMessage(
-                    content=(
-                        f"Search Results for '{section.search_query}':\n{search_results}\n\n"
-                        "Use these results to verify facts, correct any inaccuracies, and enrich your content."
+        for query in section.search_query:
+            search_results = search_tool.run(query)
+            if search_results:
+                messages.append(
+                    HumanMessage(
+                        content=(
+                            f"Search Results for query '{query}':\n{search_results}\n\n"
+                            "Use these results to verify facts, correct any inaccuracies, and enrich your content."
+                        )
                     )
                 )
-            )
-        else:
-            messages.append(
-                HumanMessage(
-                    content=(
-                        "No search results were found for the specified query. "
-                        "If possible, try to consider related topics or rephrase the query in your writing."
+            else:
+                messages.append(
+                    HumanMessage(
+                        content=f"No search results were found for the query: '{query}'."
                     )
                 )
-            )
 
     content = llm.invoke(messages)
     return {"completed_sections": [content.content]}
 
 
 def final_report_generator(state: State):
-    """
-    Combine all sections into the final report.
-    The final report will be written in the language tone specified by state['language_tone'].
-    """
+    
     tone = state.get("language_tone", "professional")
     combined_content = "\n\n---\n\n".join(state["completed_sections"])
     messages = [
@@ -130,25 +120,19 @@ def final_report_generator(state: State):
     return {"final_report": final_report_response.content}
 
 
-# Conditional edge function to create worker nodes
 def assign_workers(state: State):
-    """Create a worker node for each section"""
     return [Send("llm_writer", {"section": s}) for s in state["sections"]]
 
 
-# Build workflow
 builder = StateGraph(State)
 
-# Add nodes with the updated node name for final report generation
 builder.add_node("orchestrator", orchestrator)
 builder.add_node("llm_writer", llm_writer)
 builder.add_node("final_report_generator", final_report_generator)
 
-# Define edges
 builder.add_edge(START, "orchestrator")
 builder.add_conditional_edges("orchestrator", assign_workers)
 builder.add_edge("llm_writer", "final_report_generator")
 builder.add_edge("final_report_generator", END)
 
-# Compile workflow
 workflow = builder.compile()
