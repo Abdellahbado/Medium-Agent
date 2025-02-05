@@ -32,10 +32,11 @@ class Sections(BaseModel):
 planner = llm.with_structured_output(Sections)
 
 
-# Graph state definition
+# Graph state definition including the new language_tone field
 class State(TypedDict):
     topic: str
     sections: List[Section]
+    language_tone: str  # e.g., "formal", "simple", "professional"
     completed_sections: Annotated[List[str], operator.add]
     final_report: str
 
@@ -73,9 +74,8 @@ def llm_writer(state: WorkerState):
             content=(
                 "You are an expert writer tasked with creating a detailed and accurate report section. "
                 "Make sure to incorporate external search results as a primary source for verifying facts "
-                "and include them as references"
-                "and enhancing the content. If search results are provided, use them to correct inaccuracies "
-                "and add up-to-date information to your narrative."
+                "and include them as references, enhancing the content. If search results are provided, use "
+                "them to correct inaccuracies and add up-to-date information to your narrative."
             )
         ),
         HumanMessage(
@@ -108,9 +108,26 @@ def llm_writer(state: WorkerState):
     return {"completed_sections": [content.content]}
 
 
-def synthesizer(state: State):
-    """Combine all sections into the final report"""
-    return {"final_report": "\n\n---\n\n".join(state["completed_sections"])}
+def final_report_generator(state: State):
+    """
+    Combine all sections into the final report.
+    The final report will be written in the language tone specified by state['language_tone'].
+    """
+    tone = state.get("language_tone", "professional")
+    combined_content = "\n\n---\n\n".join(state["completed_sections"])
+    messages = [
+        SystemMessage(
+            content=(
+                f"You are an expert writer. Generate the final report in a {tone} tone. "
+                "Ensure that the language style throughout the report reflects this tone consistently."
+            )
+        ),
+        HumanMessage(
+            content=f"Combine the following content into a coherent final report:\n{combined_content}"
+        ),
+    ]
+    final_report_response = llm.invoke(messages)
+    return {"final_report": final_report_response.content}
 
 
 # Conditional edge function to create worker nodes
@@ -122,17 +139,16 @@ def assign_workers(state: State):
 # Build workflow
 builder = StateGraph(State)
 
-# Add nodes
+# Add nodes with the updated node name for final report generation
 builder.add_node("orchestrator", orchestrator)
 builder.add_node("llm_writer", llm_writer)
-builder.add_node("synthesizer", synthesizer)
+builder.add_node("final_report_generator", final_report_generator)
 
 # Define edges
 builder.add_edge(START, "orchestrator")
 builder.add_conditional_edges("orchestrator", assign_workers)
-builder.add_edge("llm_writer", "synthesizer")
-builder.add_edge("synthesizer", END)
+builder.add_edge("llm_writer", "final_report_generator")
+builder.add_edge("final_report_generator", END)
 
 # Compile workflow
 workflow = builder.compile()
-
