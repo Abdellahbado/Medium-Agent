@@ -1,6 +1,6 @@
-# AI Report Generator
+# AI Medium Article Generator
 
-This repository contains an AI-powered report generation workflow using LangChain, LangGraph, and Groq's LLM. The agent automates content planning, research, and writing based on a given topic, it follows this workflow
+This repository contains an AI-powered Medium Article Generator workflow using LangChain, LangGraph, and Groq's LLM. The agent automates content planning, research, and writing based on a given topic, it follows this workflow
 ![image](https://github.com/user-attachments/assets/3bb5f0d8-e905-4f68-a31f-06f19c4e8d5c)
 
 
